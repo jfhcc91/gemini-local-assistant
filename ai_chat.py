@@ -1,83 +1,62 @@
 import os
-import sqlite3
+from openai import OpenAI
 from google import genai
-from google.genai import types
-from dotenv import load_dotenv  # 👈 FIXED: Changed load_data to load_dotenv
+from dotenv import load_dotenv
 
-# Load the environment variables from your local hidden file
-load_dotenv()  # 👈 FIXED: Changed load_data() to load_dotenv()
+# Load credentials from the secure environment file
+load_dotenv()
 
-# Securely grab the key from your computer's local system environment
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# Initialize the official Google client safely
-client = genai.Client(api_key=GEMINI_API_KEY)
-
-# ... [The rest of your database and chat loop code remains exactly the same!]
-
-print("==========================================")
-print("🚀 Live Gemini Chat Engine Active!")
-print("Natively grounded with Live Google Search.")
-print("==========================================\n")
-
-def get_database_tasks():
-    db_path = "todo.db"
-    if not os.path.exists(db_path):
-        return "No tasks found."
+def generate_openai_response(prompt, system_instruction):
+    """Handles logic for OpenAI Models"""
     try:
-        connection = sqlite3.connect(db_path)
-        cursor = connection.cursor()
-        cursor.execute("SELECT id, title FROM tasks")
-        rows = cursor.fetchall()
-        connection.close()
-        if not rows: return "To-Do list is empty."
-        return "User's current To-Do tasks:\n" + "\n".join([f"- [ID {r[0]}]: {r[1]}" for r in rows])
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7
+        )
+        return response.choices[0].message.content
     except Exception as e:
-        return f"DB Error: {e}"
+        return f"OpenAI Error: {str(e)}"
 
-# Start chat tracking using the default flash model
-chat = client.chats.create(model="gemini-2.5-flash")
-
-while True:
-    user_input = input("✨ You: ")
-    if user_input.strip().lower() in ["exit", "quit"]:
-        break
-        
-    if not user_input.strip():
-        continue
-        
-    # Inject database tasks seamlessly if asked
-    if any(word in user_input.lower() for word in ["task", "todo", "do to"]):
-        db_data = get_database_tasks()
-        user_input = f"{db_data}\n\nUser Question: {user_input}"
-
-    print("🤖 Gemini is researching...", end="\r")
-    
-    # Configure our live Google Search grounding tool
-    search_config = types.GenerateContentConfig(
-        tools=[{"google_search": {}}]
-    )
-    
+def generate_gemini_response(prompt, system_instruction):
+    """Handles logic for Google Gemini Models"""
     try:
-        # Try processing with our default chat history configuration
-        response = chat.send_message(user_input, config=search_config)
-        print(" " * 25, end="\r")
-        print(f"🤖 AI: {response.text}\n")
+        # Client automatically reads GEMINI_API_KEY from environment variables
+        client = genai.Client()
         
+        # Combine instructions using standard Gemini syntax
+        full_content = f"System Instruction: {system_instruction}\n\nUser Request: {prompt}"
+        
+        response = client.models.generate_content(
+            model='gemini-2.5-flash', # Blazing fast and cheap for business use
+            contents=full_content
+        )
+        return response.text
     except Exception as e:
-        # 🚨 TRAFFIC SAFETY INTERCEPT: If the server is overloaded, try the sibling model cluster
-        if "503" in str(e) or "UNAVAILABLE" in str(e):
-            print("\n🔄 Primary server busy. Routing to alternative model cluster...")
-            try:
-                # We spin up a single backup request using an alternate model ID
-                backup_response = client.models.generate_content(
-                    model="gemini-2.5-pro", # Calls the heavy reasoning version instead
-                    contents=user_input,
-                    config=search_config
-                )
-                print(f"🤖 AI (Backup Link): {backup_response.text}\n")
-            except Exception as backup_error:
-                print(f"\n❌ Both Google server pools are full right now: {backup_error}")
-        else:
-            print(f"\n❌ Error calling Gemini API: {e}")
-            break
+        return f"Gemini Error: {str(e)}"
+
+def run_assistant(prompt, system_instruction="You are a helpful business assistant."):
+    """Orchestrates which AI provider to use based on configuration"""
+    provider = os.getenv("AI_PROVIDER", "openai").lower().strip()
+    
+    if provider == "gemini":
+        return generate_gemini_response(prompt, system_instruction)
+    else:
+        return generate_openai_response(prompt, system_instruction)
+
+# Testing Sandbox
+if __name__ == "__main__":
+    current_provider = os.getenv("AI_PROVIDER", "openai").upper()
+    print(f"🤖 AI Assistant Initialized using [{current_provider}]...")
+    
+    sample_email = "Your software is lagging and my team is losing hours. Fix this or we want a refund."
+    prompt = f"Draft a polite and reassuring response to this client email: '{sample_email}'"
+    system_role = "You are an expert customer success manager."
+    
+    print("\n--- Generating Email Draft ---")
+    draft = run_assistant(prompt, system_role)
+    print(draft)
